@@ -104,12 +104,17 @@ def get_skinid(skinInfo, inf_name):
 
 class MoveProcess(object):
 
-    def __init__(self, skinCluster):
+    def __init__(self, skinCluster, procSkins=[]):
+        self.skinCluster = skinCluster
         self.skinInfo = get_skin_info(skinCluster)
-        skinFn        = get_dependFn(skinCluster)
-        self.bpmPlug  = skinFn.findPlug('bindPreMatrix',0)
+        self.skinFn = get_dependFn(skinCluster)
+        self.bpmPlug = skinFn.findPlug('bindPreMatrix',0)
+        if not procSkins:
+            procSkins = [skinCluster]
+        self.procSkins = procSkins
 
     def set(self, inf):
+        self.inf = inf
         self.skin_id   = self.skinInfo.get(inf)
         self.bpmPlugId = self.bpmPlug.elementByLogicalIndex( self.skin_id )
         self.init_mx_obj = self.bpmPlugId.asMObject()
@@ -119,7 +124,25 @@ class MoveProcess(object):
     def __enter__(self):
         mxData = om.MFnMatrixData()
         move_obj = mxData.create(self.move_mx)
-        self.bpmPlugId.setMObject(move_obj)
+
+        self.rebpm = {}
+        if self.procSkins: # all skinCluster
+            for skincl in self.procSkins:
+                skinInfo = get_skin_info(skincl)
+                skinFn   = get_dependFn(skincl)
+                bpmPlug  = skinFn.findPlug('bindPreMatrix',0)
+                skin_id  = skinInfo.get(self.inf)
+                if skin_id:
+                    bpmPlugId = bpmPlug.elementByLogicalIndex( skin_id )
+                    init_mx_obj = bpmPlugId.asMObject()
+                    bpmPlugId.setMObject(move_obj)
+                    if not self.rebpm.has_key(skincl):
+                        self.rebpm[skincl] = []
+                    self.rebpm[skincl].append([bpmPlugId, init_mx_obj])
+
+        for skincl in self.procSkins:
+            cmds.skinCluster(skincl, edit=True, recacheBindMatrices=True)
+
         return self
 
     def __exit__(self, exception_type, exception_value, traceback):
@@ -129,7 +152,12 @@ class MoveProcess(object):
             print exception_value
         if traceback:
             print traceback
-        self.bpmPlugId.setMObject(self.init_mx_obj)
+        if self.rebpm:
+            for skincl, procinfo in self.rebpm.items():
+                for pi in procinfo:
+                    pi[0].setMObject(pi[1])
+        for skincl in self.procSkins:
+            cmds.skinCluster(skincl, edit=True, recacheBindMatrices=True)
 
 # Maya2016
 class MoveProcess_old(object):
@@ -199,7 +227,6 @@ def convert_weights( mesh, tolerance = -1, vtxids = [], procSkins = [] ):
         mProc.set(jt_name)
         with mProc:
             move_pos = get_vtx_pos(mesh, vtxids)
-            #cmds.refresh()
         skin_weights = calc_weights( move_pos, rest_pos )
 
         for vid, weight in skin_weights.items():
