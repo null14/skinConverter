@@ -22,7 +22,7 @@ print('[TIME] %f sec' % (e - s))
 #[TIME] 0.171000 sec
 '''
 
-def run(mesh=None,  tolerance = -1):
+def run(mesh=None,  tolerance = -1, skinHistory = False):
 
     if mesh:
         cmds.select(mesh)
@@ -33,12 +33,19 @@ def run(mesh=None,  tolerance = -1):
         cmds.warning('# Please select skin mesh.')
         return False
 
+    procSkins = []
     if vtx_cmp:
-        weight_data = convert_weights( mesh, tolerance, vtx_cmp.getElements())
+        if skinHistory:
+            procSkins = cmds.ls(cmds.listHistory(mesh), type='skinCluster')
+            print('# process skinClusters : %s'%(str(procSkins)))
+        weight_data = convert_weights( mesh, tolerance, vtx_cmp.getElements(), procSkins)
         set_weights( mesh, weight_data, vtx_cmp.getElements() )
     else:
         mesh = sel[0]
-        weight_data = convert_weights( mesh, tolerance, [])
+        if skinHistory:
+            procSkins = cmds.ls(cmds.listHistory(mesh), type='skinCluster')
+            print('# process skinClusters : %s'%(str(procSkins)))
+        weight_data = convert_weights( mesh, tolerance, [], procSkins)
         set_weights( mesh, weight_data )
         cmds.select(mesh)
 
@@ -59,6 +66,7 @@ def get_skincluster(mesh = 'pCylinder1'):
         skincl = skincl[0]
     return skincl
 
+
 def get_skin_info(skincluster):
     result = {}
     skinFn = get_dependFn(skincluster)
@@ -67,9 +75,13 @@ def get_skin_info(skincluster):
     ids = mxPlug.getExistingArrayAttributeIndices()
     for skinid in ids:
         idplug = mxPlug.elementByLogicalIndex( skinid )
-        sObj = idplug.source()
-        dagPath = om.MDagPath().getAPathTo(sObj.node())
-        inf = dagPath.partialPathName()
+        try:
+            sObj = idplug.source()
+            dagPath = om.MDagPath().getAPathTo(sObj.node())
+            inf = dagPath.partialPathName()
+        except: #maya2016
+            attr_name = idplug.info
+            inf = cmds.listConnections(attr_name, s=1, d=0)[0]
         result[inf] = skinid
     return result
 
@@ -119,26 +131,48 @@ class MoveProcess(object):
             print traceback
         self.bpmPlugId.setMObject(self.init_mx_obj)
 
-
+# Maya2016
 class MoveProcess_old(object):
 
-    def __init__(self, skinCluster):
+    def __init__(self, skinCluster, procSkins=[]):
         self.skincl = skinCluster
         self.skinInfo = get_skin_info(skinCluster)
+        self.procSkins = procSkins
 
     def set(self, inf):
         self.inf = inf
-        init_mx  = get_matrix(name = inf, world = 1)
-        self.new_mx  = init_mx * MOVE_MATRIX
-        for sinfo in self.skinInfo:
-            if sinfo.get("inf") == self.inf:
-                self.skin_id = sinfo.get("id")
+        self.init_mx = get_matrix(name = inf, world = 1)
+        self.new_mx  = self.init_mx * MOVE_MATRIX
+        self.skin_id = self.skinInfo.get(inf)
 
     def __enter__(self):
-        self.skin_mx_attr  = self.skincl +'.matrix[%s]'%self.skin_id
-        self.joint_mx_attr = self.inf + '.worldMatrix[0]'
-        cmds.disconnectAttr(self.joint_mx_attr, self.skin_mx_attr)
-        cmds.setAttr(self.skin_mx_attr, *self.new_mx, type='matrix')
+        self.in_recncts = []
+        self.out_recncts = []
+
+        if self.procSkins: # all skinCluster
+            self.joint_mx_attr = self.inf + '.worldMatrix[0]'
+            skincl_attrs = cmds.listConnections(self.joint_mx_attr, s=0, d=1, p=1, type='skinCluster') or []
+            for skin_at in skincl_attrs:
+                skincl = skin_at.split('.')[0]
+                if not skincl in self.procSkins:
+                    continue
+
+                self.skin_mx_attr  = skin_at
+                cmds.disconnectAttr(self.joint_mx_attr, self.skin_mx_attr)
+                cmds.setAttr(self.skin_mx_attr, *self.new_mx, type='matrix')
+
+                self.in_recncts.append(self.joint_mx_attr)
+                self.out_recncts.append(self.skin_mx_attr)
+
+        else:  # current skinCluster
+            self.skin_mx_attr  = self.skincl +'.matrix[%s]'%self.skin_id
+            self.joint_mx_attr = self.inf + '.worldMatrix[0]'
+            cmds.disconnectAttr(self.joint_mx_attr, self.skin_mx_attr)
+            cmds.setAttr(self.skin_mx_attr, *self.new_mx, type='matrix')
+
+            self.in_recncts.append(self.joint_mx_attr)
+            self.out_recncts.append(self.skin_mx_attr)
+
         return self
 
     def __exit__(self, exception_type, exception_value, traceback):
@@ -148,9 +182,11 @@ class MoveProcess_old(object):
             print exception_value
         if traceback:
             print traceback
-        cmds.connectAttr(self.joint_mx_attr, self.skin_mx_attr)
+        for inc, outc in zip(self.in_recncts, self.out_recncts):
+            cmds.setAttr(outc, *self.init_mx, type='matrix')
+            cmds.connectAttr(inc, outc)
 
-def convert_weights( mesh, tolerance = -1, vtxids = [] ):
+def convert_weights( mesh, tolerance = -1, vtxids = [], procSkins = [] ):
 
     rest_pos    = get_vtx_pos(mesh, vtxids)
     skinCluster = get_skincluster( mesh )
@@ -159,10 +195,11 @@ def convert_weights( mesh, tolerance = -1, vtxids = [] ):
     weight_data = {}
 
     for jt_name in influences:
-        mProc = MoveProcess(skinCluster)
+        mProc = MoveProcess(skinCluster, procSkins)
         mProc.set(jt_name)
         with mProc:
             move_pos = get_vtx_pos(mesh, vtxids)
+            #cmds.refresh()
         skin_weights = calc_weights( move_pos, rest_pos )
 
         for vid, weight in skin_weights.items():
