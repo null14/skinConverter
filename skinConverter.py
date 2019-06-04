@@ -108,7 +108,7 @@ class MoveProcess(object):
         self.skinCluster = skinCluster
         self.skinInfo = get_skin_info(skinCluster)
         self.skinFn = get_dependFn(skinCluster)
-        self.bpmPlug = skinFn.findPlug('bindPreMatrix',0)
+        self.bpmPlug = self.skinFn.findPlug('bindPreMatrix',0)
         if not procSkins:
             procSkins = [skinCluster]
         self.procSkins = procSkins
