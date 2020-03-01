@@ -16,7 +16,7 @@ NORMALIZE = True
 '''
 from time import time
 s=time()
-run(mesh=None,  tolerance = 0)
+run(mesh=None,  tolerance = -1)
 e=time()
 print('[TIME] %f sec' % (e - s))
 #[TIME] 0.171000 sec
@@ -214,6 +214,33 @@ class MoveProcess_old(object):
             cmds.setAttr(outc, *self.init_mx, type='matrix')
             cmds.connectAttr(inc, outc)
 
+
+# joint move
+class MoveProcess_jnt(object):
+
+    def __init__(self):
+        pass
+
+    def set(self, inf):
+        self.inf = inf
+        self.init_mx = get_matrix(name = inf, world = 1)
+        self.new_mx  = self.init_mx * MOVE_MATRIX
+
+    def __enter__(self):
+        cmds.xform(self.inf, ws=1, matrix=self.new_mx)
+
+        return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        if exception_type:
+            print exception_type
+        if exception_value:
+            print exception_value
+        if traceback:
+            print traceback
+        cmds.xform(self.inf, ws=1, matrix=self.init_mx)
+
+
 def convert_weights( mesh, tolerance = -1, vtxids = [], procSkins = [] ):
 
     rest_pos    = get_vtx_pos(mesh, vtxids)
@@ -223,7 +250,7 @@ def convert_weights( mesh, tolerance = -1, vtxids = [], procSkins = [] ):
     weight_data = {}
 
     for jt_name in influences:
-        mProc = MoveProcess(skinCluster, procSkins)
+        mProc = MoveProcess_jnt() # MoveProcess(skinCluster, procSkins)
         mProc.set(jt_name)
         with mProc:
             move_pos = get_vtx_pos(mesh, vtxids)
