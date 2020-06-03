@@ -225,8 +225,10 @@ class MoveProcess_jnt(object):
         self.inf = inf
         self.init_mx = get_matrix(name = inf, world = 1)
         self.new_mx  = self.init_mx * MOVE_MATRIX
+        self.cncts = cmds.listConnections(self.inf, s=1, d=0, p=1, c=1)
 
     def __enter__(self):
+        self.disconnect()
         cmds.xform(self.inf, ws=1, matrix=self.new_mx)
 
         return self
@@ -239,6 +241,21 @@ class MoveProcess_jnt(object):
         if traceback:
             print traceback
         cmds.xform(self.inf, ws=1, matrix=self.init_mx)
+        self.connect()
+        
+    def disconnect(self):
+        if not self.cncts:
+            return
+        srcAttrs, inAttrs = self.cncts[1::2], self.cncts[::2]
+        for src, ina in zip(srcAttrs, inAttrs):
+            cmds.disconnectAttr(src, ina)
+
+    def connect(self):
+        if not self.cncts:
+            return
+        srcAttrs, inAttrs = self.cncts[1::2], self.cncts[::2]
+        for src, ina in zip(srcAttrs, inAttrs):
+            cmds.connectAttr(src, ina, f=1)
 
 
 def convert_weights( mesh, tolerance = -1, vtxids = [], procSkins = [] ):
